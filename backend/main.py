@@ -3,28 +3,33 @@ from fastapi import FastAPI, UploadFile, File
 from dotenv import load_dotenv
 import google.generativeai as genai
 import os
+import json
+
 load_dotenv()
-print(os.getenv("GEMINI_API_KEY")[:10])
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 model = genai.GenerativeModel("gemini-2.5-flash")
+
 app = FastAPI()
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-UPLOAD_FOLDER = "uploads"
-
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @app.get("/")
 def home():
-    return {"message": "Backend is working!"}
+    return {"message": "Backend Working"}
+
 
 @app.post("/upload")
 async def upload_image(file: UploadFile = File(...)):
@@ -32,19 +37,28 @@ async def upload_image(file: UploadFile = File(...)):
     image_bytes = await file.read()
 
     prompt = """
-    Analyze this restaurant image and return:
+You are a restaurant compliance AI.
 
-    1. Is staff wearing a cap? (Yes/No)
-    2. Is staff wearing gloves? (Yes/No)
-    3. Number of people behind the counter
-    4. Number of people in front of the counter
-    5. Number of occupied tables
-    6. Number of empty tables
+Analyze this restaurant image.
 
-    Give a short structured response.
-Do not use markdown symbols like **, *, # or bullet formatting.
-Return plain text only.
-    """
+Return ONLY valid JSON in exactly this format:
+
+{
+  "cap":"Yes",
+  "gloves":"No",
+  "behind_counter":2,
+  "front_counter":5,
+  "occupied_tables":3,
+  "empty_tables":2
+}
+
+Rules:
+- Return ONLY JSON.
+- Do NOT use markdown.
+- Do NOT use ```json.
+- Do NOT add any explanation.
+- Numbers must be integers.
+"""
 
     response = model.generate_content(
         [
@@ -55,8 +69,30 @@ Return plain text only.
             },
         ]
     )
-    print("Gemini Response:")
-    print(response.text)
-    return {
-        "analysis": response.text
-    }
+
+    result = response.text.strip()
+
+    print("Gemini Raw Response:")
+    print(result)
+
+    # Remove markdown if Gemini adds it
+    result = result.replace("```json", "")
+    result = result.replace("```", "")
+    result = result.strip()
+
+    try:
+        data = json.loads(result)
+        return data
+
+    except Exception as e:
+        print("JSON Error:", e)
+
+        return {
+            "cap": "Unknown",
+            "gloves": "Unknown",
+            "behind_counter": 0,
+            "front_counter": 0,
+            "occupied_tables": 0,
+            "empty_tables": 0,
+            "raw_response": result,
+        }
